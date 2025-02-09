@@ -55,21 +55,23 @@ To use the AI Folderizer, follow these steps:
      ```
 
 2. **Run the Main Script**:
-   - Execute the `app/main.py` script to start the categorization process. You can run it using Python:
+   - Execute the script with the required parameters:
 
      ```bash
-     python app/main.py
+     python app/main.py --path /path/to/files --extension .ext
      ```
 
-3. **Specify the Directory**:
-   - In the `main.py` file, modify the `path` variable to point to the directory containing the files you want to categorize. The script will process all files with the specified extension (default is `.m4a`).
+   Parameters:
+   - `--path`: Directory path containing files to categorize
+   - `--extension`: File extension to filter (e.g. .m4a)
+   - `--help`: Show help message and exit
 
-4. **Check the Output**:
+3. **Check the Output**:
    - After running the script, check the specified directory for newly created folders corresponding to the categories. The files will be moved into their respective category folders.
 
-5. **Environment Variables**:
+4. **Environment Variables**:
    - Ensure that your environment variables are set correctly in the `.env` file, especially the `OPENAI_API_KEY`, to allow the script to access the OpenAI API for categorization.
 
 ## Example
 
-To categorize audio files in the "Audiobooks" directory, set the `path` variable in `main.py` to:
+To categorize audio files in the "Audiobooks" directory:
