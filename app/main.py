@@ -1,19 +1,19 @@
 import json
 import os
 import shutil
+import time
 from uuid import uuid4
 
+import faiss
 from dotenv import load_dotenv
 from langchain.output_parsers import PydanticOutputParser
+from langchain_community.docstore.in_memory import InMemoryDocstore
+from langchain_community.vectorstores import FAISS
 from langchain_core.example_selectors import SemanticSimilarityExampleSelector
 from langchain_core.exceptions import OutputParserException
 from langchain_core.prompts import ChatPromptTemplate, FewShotPromptWithTemplates
-from langchain_core.vectorstores import InMemoryVectorStore
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from pydantic import BaseModel, Field, model_validator
-import faiss
-from langchain_community.docstore.in_memory import InMemoryDocstore
-from langchain_community.vectorstores import FAISS
 
 load_dotenv()
 
@@ -355,7 +355,7 @@ async def categorize(entries: list[File]) -> list[Entry]:
     example_selector = SemanticSimilarityExampleSelector(
         vectorstore=vector_store,
         k=2,
-        input_keys=["entry"],  
+        input_keys=["entry"],
     )
 
     # Initialize selector with examples
@@ -435,11 +435,26 @@ def trim_files_whitespaces(path: str, extension: str) -> None:
                 os.rename(old_path, new_path)
 
 
-async def main() -> None:
-    """Main function to load and display categories."""
+async def main(path: str = "", extension: str = "", help: bool = False) -> None:
+    """Main function to load and display categories.
 
-    path = "C:\\Users\\Eduardo\\Proton Drive\\My files\\Education\\Books\\Audiobooks\\Blinkist\\Blinkist August 2023 SiteRip Collection - BASiQ"
-    extension = ".m4a"
+    Args:
+        path: Directory path containing files to categorize
+        extension: File extension to filter by
+        help: Show help message and exit
+    """
+    if help or not path or not extension:
+        print("""
+AI Folderizer - Automatically categorize files into folders
+
+Usage: python app/main.py --path PATH --extension EXTENSION [--help]
+
+Options:
+  --path PATH       Directory path containing files to categorize
+  --extension EXT   File extension to filter (e.g. .m4a)
+  --help           Show this help message and exit
+""")
+        return
 
     trim_files_whitespaces(path, extension)
     files = read_files_from_path(path, extension)
