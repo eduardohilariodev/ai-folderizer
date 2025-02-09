@@ -39,8 +39,6 @@ AI-powered Python tool that automatically categorizes and organizes files into f
 
 5. Update the `.env` file with your OpenAI API key and LangSmith if you want to.
 
-# Start Generation Here
-
 ## Usage
 
 To use the AI Folderizer, follow these steps:
@@ -72,6 +70,6 @@ To use the AI Folderizer, follow these steps:
 5. **Environment Variables**:
    - Ensure that your environment variables are set correctly in the `.env` file, especially the `OPENAI_API_KEY`, to allow the script to access the OpenAI API for categorization.
 
-# Example
+## Example
 
 To categorize audio files in the "Audiobooks" directory, set the `path` variable in `main.py` to:
