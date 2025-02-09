@@ -1,15 +1,23 @@
 import json
 import os
 import shutil
-import time
+from uuid import uuid4
 
 from dotenv import load_dotenv
-from langchain.output_parsers import PydanticOutputParser, RetryOutputParser
-from langchain.prompts import PromptTemplate
-from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, Field
+from langchain.output_parsers import PydanticOutputParser
+from langchain_core.example_selectors import SemanticSimilarityExampleSelector
+from langchain_core.exceptions import OutputParserException
+from langchain_core.prompts import ChatPromptTemplate, FewShotPromptWithTemplates
+from langchain_core.vectorstores import InMemoryVectorStore
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from pydantic import BaseModel, Field, model_validator
+import faiss
+from langchain_community.docstore.in_memory import InMemoryDocstore
+from langchain_community.vectorstores import FAISS
 
 load_dotenv()
+
+categories = set()
 
 
 class Entry(BaseModel):
@@ -18,6 +26,17 @@ class Entry(BaseModel):
     name: str = Field(description="The name of the entry")
     category: str = Field(description="The category of the entry")
     type: str = Field(description="The type of the entry")
+    valid_categories: set[str] = Field(default_factory=set)
+
+    # You can add custom validation logic easily with Pydantic.
+    @model_validator(mode="before")
+    @classmethod
+    def category_is_correct(cls, values) -> dict:
+        if not isinstance(values, dict):
+            return values
+        if values.get("category") not in values.get("valid_categories", set()):
+            raise ValueError("Category not found in allowed categories!")
+        return values
 
 
 class File(BaseModel):
@@ -39,9 +58,9 @@ def load_categories(file_path: str) -> set:
         Set: A set of categories.
     """
     with open(file_path, "r") as file:
-        categories = json.load(file)
+        categories = set(json.load(file))
 
-    return set(categories)
+    return categories
 
 
 def read_files_from_path(path: str, extension: str | None = None) -> list[File]:
@@ -78,6 +97,276 @@ async def categorize(entries: list[File]) -> list[Entry]:
     Returns:
         list[Entry]: List of categorized entries
     """
+    examples = [
+        {
+            "type": "book",
+            "entry": "Becoming by Michelle Obama",
+            "output": {
+                "name": "Becoming",
+                "category": "Biography & Memoir",
+                "type": "book",
+            },
+        },
+        {
+            "type": "book",
+            "entry": "Deep Work by Cal Newport",
+            "output": {
+                "name": "Deep Work",
+                "category": "Career & Success",
+                "type": "book",
+            },
+        },
+        {
+            "type": "book",
+            "entry": "Crucial Conversations by Kerry Patterson",
+            "output": {
+                "name": "Crucial Conversations",
+                "category": "Communication Skills",
+                "type": "book",
+            },
+        },
+        {
+            "type": "book",
+            "entry": "The Culture Code by Daniel Coyle",
+            "output": {
+                "name": "The Culture Code",
+                "category": "Corporate Culture",
+                "type": "book",
+            },
+        },
+        {
+            "type": "book",
+            "entry": "Big Magic by Elizabeth Gilbert",
+            "output": {"name": "Big Magic", "category": "Creativity", "type": "book"},
+        },
+        {
+            "type": "book",
+            "entry": "Capital in the Twenty-First Century by Thomas Piketty",
+            "output": {
+                "name": "Capital in the Twenty-First Century",
+                "category": "Economics",
+                "type": "book",
+            },
+        },
+        {
+            "type": "book",
+            "entry": "How Children Learn by John Holt",
+            "output": {
+                "name": "How Children Learn",
+                "category": "Education",
+                "type": "book",
+            },
+        },
+        {
+            "type": "book",
+            "entry": "Zero to One by Peter Thiel",
+            "output": {
+                "name": "Zero to One",
+                "category": "Entrepreneurship",
+                "type": "book",
+            },
+        },
+        {
+            "type": "book",
+            "entry": "The Great Gatsby by F. Scott Fitzgerald",
+            "output": {
+                "name": "The Great Gatsby",
+                "category": "Fiction",
+                "type": "book",
+            },
+        },
+        {
+            "type": "book",
+            "entry": "In Defense of Food by Michael Pollan",
+            "output": {
+                "name": "In Defense of Food",
+                "category": "Health & Nutrition",
+                "type": "book",
+            },
+        },
+        {
+            "type": "book",
+            "entry": "Sapiens by Yuval Noah Harari",
+            "output": {"name": "Sapiens", "category": "History", "type": "book"},
+        },
+        {
+            "type": "book",
+            "entry": "Good to Great by Jim Collins",
+            "output": {
+                "name": "Good to Great",
+                "category": "Management & Leadership",
+                "type": "book",
+            },
+        },
+        {
+            "type": "book",
+            "entry": "Building a StoryBrand by Donald Miller",
+            "output": {
+                "name": "Building a StoryBrand",
+                "category": "Marketing & Sales",
+                "type": "book",
+            },
+        },
+        {
+            "type": "book",
+            "entry": "The Power of Now by Eckhart Tolle",
+            "output": {
+                "name": "The Power of Now",
+                "category": "Mindfulness & Happiness",
+                "type": "book",
+            },
+        },
+        {
+            "type": "book",
+            "entry": "Rich Dad Poor Dad by Robert Kiyosaki",
+            "output": {
+                "name": "Rich Dad Poor Dad",
+                "category": "Money & Investments",
+                "type": "book",
+            },
+        },
+        {
+            "type": "book",
+            "entry": "The Alchemist by Paulo Coelho",
+            "output": {
+                "name": "The Alchemist",
+                "category": "Motivation & Inspiration",
+                "type": "book",
+            },
+        },
+        {
+            "type": "book",
+            "entry": "Silent Spring by Rachel Carson",
+            "output": {
+                "name": "Silent Spring",
+                "category": "Nature & the Environment",
+                "type": "book",
+            },
+        },
+        {
+            "type": "book",
+            "entry": "How to Talk So Kids Will Listen by Adele Faber",
+            "output": {
+                "name": "How to Talk So Kids Will Listen",
+                "category": "Parenting",
+                "type": "book",
+            },
+        },
+        {
+            "type": "book",
+            "entry": "Atomic Habits by James Clear",
+            "output": {
+                "name": "Atomic Habits",
+                "category": "Personal Development",
+                "type": "book",
+            },
+        },
+        {
+            "type": "book",
+            "entry": "The Republic by Plato",
+            "output": {
+                "name": "The Republic",
+                "category": "Philosophy",
+                "type": "book",
+            },
+        },
+        {
+            "type": "book",
+            "entry": "The Prince by Niccolò Machiavelli",
+            "output": {"name": "The Prince", "category": "Politics", "type": "book"},
+        },
+        {
+            "type": "book",
+            "entry": "Getting Things Done by David Allen",
+            "output": {
+                "name": "Getting Things Done",
+                "category": "Productivity",
+                "type": "book",
+            },
+        },
+        {
+            "type": "book",
+            "entry": "Thinking, Fast and Slow by Daniel Kahneman",
+            "output": {
+                "name": "Thinking, Fast and Slow",
+                "category": "Psychology",
+                "type": "book",
+            },
+        },
+        {
+            "type": "book",
+            "entry": "The Power of Myth by Joseph Campbell",
+            "output": {
+                "name": "The Power of Myth",
+                "category": "Religion & Spirituality",
+                "type": "book",
+            },
+        },
+        {
+            "type": "book",
+            "entry": "A Brief History of Time by Stephen Hawking",
+            "output": {
+                "name": "A Brief History of Time",
+                "category": "Science",
+                "type": "book",
+            },
+        },
+        {
+            "type": "book",
+            "entry": "Men Are from Mars, Women Are from Venus by John Gray",
+            "output": {
+                "name": "Men Are from Mars, Women Are from Venus",
+                "category": "Sex & Relationships",
+                "type": "book",
+            },
+        },
+        {
+            "type": "book",
+            "entry": "Guns, Germs, and Steel by Jared Diamond",
+            "output": {
+                "name": "Guns, Germs, and Steel",
+                "category": "Society & Culture",
+                "type": "book",
+            },
+        },
+        {
+            "type": "book",
+            "entry": "The Singularity Is Near by Ray Kurzweil",
+            "output": {
+                "name": "The Singularity Is Near",
+                "category": "Technology & the Future",
+                "type": "book",
+            },
+        },
+    ]
+    to_vectorize = [" ".join(example.values()) for example in examples]
+    embeddings = OpenAIEmbeddings()
+
+    index = faiss.IndexFlatL2(len(embeddings.embed_query("hello world")))
+    vector_store = FAISS(
+        embedding_function=embeddings,
+        index=index,
+        docstore=InMemoryDocstore(),
+        index_to_docstore_id={},
+    )
+    uuids = [str(uuid4()) for _ in range(len(examples))]
+    vector_store.add_documents(documents=examples, ids=uuids)
+
+    example_selector = SemanticSimilarityExampleSelector(
+        vectorstore=vector_store,
+        k=2,
+        input_keys=["entry"],  
+    )
+
+    # Initialize selector with examples
+    example_selector.add_examples(examples)
+
+    example_prompt = ChatPromptTemplate.from_messages(
+        [
+            ("human", "{input}"),
+            ("ai", "{output}"),
+        ]
+    )
 
     categories = load_categories("app/categories.json")
     categories_str = ", ".join(categories)
@@ -86,9 +375,11 @@ async def categorize(entries: list[File]) -> list[Entry]:
         pydantic_object=Entry,
     )
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    retry_parser = RetryOutputParser.from_llm(parser=parser, llm=llm)
 
-    prompt = PromptTemplate(
+    # Create the prompt and chain
+    prompt = FewShotPromptWithTemplates(
+        examples=examples,  # Add examples here
+        example_prompt=example_prompt,
         template="""
         You must ONLY select from these exact {type} categories: {categories_str}
         For the {type} titled "{entry}", return ONLY ONE category from the list above that best matches.
@@ -96,15 +387,27 @@ async def categorize(entries: list[File]) -> list[Entry]:
         If no category fits perfectly, choose the closest match from the provided list.
         {format_instructions}
         """,
+        example_selector=example_selector,  # Add selector here
         input_variables=["categories_str", "entry", "type"],
         partial_variables={"format_instructions": parser.get_format_instructions()},
     )
 
-    prompt_and_model = prompt | llm
+    # Create the chain and add retry functionality
+    prompt_and_model = (prompt | llm).with_retry(
+        stop_after_attempt=3,  # Number of retries
+        wait_exponential_jitter=True,  # Add jitter between retries
+        # Specify which exceptions to retry on
+        retry_if_exception_type=(OutputParserException, ValueError),
+    )
 
-    output = prompt_and_model.batch(
+    output = await prompt_and_model.abatch(
         inputs=[
-            {"categories_str": categories_str, "entry": entry, "type": "book"}
+            {
+                "categories_str": categories_str,
+                "entry": entry,
+                "type": "book",
+                "valid_categories": categories,
+            }
             for entry in entries
         ],
         config=None,
